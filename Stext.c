@@ -5,9 +5,11 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include "config.h"
 
-#define STEXT_PORT 49401  // Stext server's port
 #define BUF_SIZE 1024
+
+int STXT_PORT = SMAIN_PORT + 1;
 
 char *USERNAME;
 
@@ -15,6 +17,7 @@ char *USERNAME;
 void processClient(int clientSock);
 void makeDirectories(char *dirPath);
 void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent);
+void removeFileFromStext(const char *filePath);
 
 int main() {
     USERNAME = getenv("USER");
@@ -31,7 +34,7 @@ int main() {
 
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(STEXT_PORT);
+    serverAddr.sin_port = htons(STXT_PORT);
 
     if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         perror("Bind failed");
@@ -45,7 +48,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Stext server listening on port %d...\n", STEXT_PORT);
+    printf("Stext server listening on port %d...\n", STXT_PORT);
 
     while (1) {
         addrLen = sizeof(clientAddr);
@@ -75,7 +78,7 @@ int main() {
 
 void processClient(int clientSock) {
     char buffer[BUF_SIZE];
-    char command[BUF_SIZE], filename[BUF_SIZE], destinationPath[BUF_SIZE];
+    char command[BUF_SIZE], secondArg[BUF_SIZE], destinationPath[BUF_SIZE];
     char *bigBuffer = NULL;
     char *fileContent = NULL;
     int bytesRead;
@@ -116,22 +119,21 @@ void processClient(int clientSock) {
             bigBuffer[totalSize] = '\0';  // Null-terminate the accumulated buffer
         }
 
-        // Parse the command, filename, and destination path from the bigBuffer
-        sscanf(bigBuffer, "%s %s %s", command, filename, destinationPath);
-
-        // Extract the file content from the remaining part of bigBuffer
-        fileContent = bigBuffer + strlen(command) + strlen(filename) + strlen(destinationPath) + 3;
-
-        // Construct the target file path and store the file content
-        char filePathTarget[BUF_SIZE];
-        snprintf(filePathTarget, BUF_SIZE, "/home/%s/stext/%s/%s", USERNAME, destinationPath + 7, filename);
-
+        // Parse the command, secondArg, and destination path from the bigBuffer
+        sscanf(bigBuffer, "%s %s %s", command, secondArg, destinationPath);
 
         
         if (strcmp(command, "ufile") == 0) {
-            storeFile(clientSock, filename, filePathTarget, fileContent);
+            // Construct the target file path and store the file content
+            char filePathTarget[BUF_SIZE];
+            snprintf(filePathTarget, BUF_SIZE, "/home/%s/stext/%s/%s", USERNAME, destinationPath + 7, secondArg);
+            // Extract the file content from the remaining part of bigBuffer
+            fileContent = bigBuffer + strlen(command) + strlen(secondArg) + strlen(destinationPath) + 3;
+            storeFile(clientSock, secondArg, filePathTarget, fileContent);
+        } else if (strcmp(command, "rmfile") == 0) {
+            // Remove the file from Stext
+            removeFileFromStext(secondArg);
         }
-        // Additional command handling (like dfile, etc.) can be added here
     }
 
     free(bigBuffer);  // Free the allocated buffer when done
@@ -144,10 +146,10 @@ void makeDirectories(char *dirPath) {
 
     snprintf(tmp, sizeof(tmp), "%s", dirPath);
     len = strlen(tmp);
-    if (tmp[len - 1] == '/')
+    if(tmp[len - 1] == '/')
         tmp[len - 1] = 0;
-    for (p = tmp + 1; *p; p++) {
-        if (*p == '/') {
+    for(p = tmp + 1; *p; p++) {
+        if(*p == '/') {
             *p = 0;
             mkdir(tmp, 0777);
             *p = '/';
@@ -187,4 +189,18 @@ void storeFile(int clientSock, const char *filename, char *filePathTarget, const
     }
 
     fclose(fp);
+}
+
+void removeFileFromStext(const char *filePath) {
+    char fullPath[1024];
+
+    // Convert the provided path to full path
+    snprintf(fullPath, sizeof(fullPath), "/home/%s/stext%s", USERNAME, filePath + 7);
+
+    // Attempt to remove the file
+    if (remove(fullPath) == 0) {
+        printf("File %s deleted successfully.\n", fullPath);
+    } else {
+        perror("Error deleting the file");
+    }
 }

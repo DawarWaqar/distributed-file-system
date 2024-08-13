@@ -4,25 +4,21 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
 #include "config.h"
 
 #define BUF_SIZE 1024
 
+int SPDF_PORT = SMAIN_PORT + 2;
 char *USERNAME;
-char *STXT_IP = "127.0.0.1";  
-int STXT_PORT = SMAIN_PORT + 1;        
-char *SPDF_IP = "127.0.0.1";  
-int SPDF_PORT = SMAIN_PORT + 2;        
+
+
 
 // Function Headers
-void prclient(int clientSock);
+void processClient(int clientSock);
 void makeDirectories(char *dirPath);
 void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent);
-void forwardFileToServer(char *serverIp, int serverPort, const char *toSend);
-void removeFileFromSmain(const char *filePath);
+void removeFileFromSpdf(const char *filePath);
 
 int main() {
     USERNAME = getenv("USER");
@@ -39,7 +35,7 @@ int main() {
 
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(SMAIN_PORT);
+    serverAddr.sin_port = htons(SPDF_PORT);
 
     if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         perror("Bind failed");
@@ -53,7 +49,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Smain server listening on port %d...\n", SMAIN_PORT);
+    printf("Spdf server listening on port %d...\n", SPDF_PORT);
 
     while (1) {
         addrLen = sizeof(clientAddr);
@@ -65,7 +61,7 @@ int main() {
 
         if ((childPid = fork()) == 0) {
             close(serverSock);
-            prclient(clientSock);
+            processClient(clientSock);
             close(clientSock);
             exit(0);
         } else if (childPid > 0) {
@@ -81,7 +77,7 @@ int main() {
     return 0;
 }
 
-void prclient(int clientSock) {
+void processClient(int clientSock) {
     char buffer[BUF_SIZE];
     char command[BUF_SIZE], secondArg[BUF_SIZE], destinationPath[BUF_SIZE];
     char *bigBuffer = NULL;
@@ -127,35 +123,22 @@ void prclient(int clientSock) {
         // Parse the command, secondArg, and destination path from the bigBuffer
         sscanf(bigBuffer, "%s %s %s", command, secondArg, destinationPath);
 
-       
-
-        if (strstr(secondArg, ".c")) {
+        
+        if (strcmp(command, "ufile") == 0) {
             // Construct the target file path and store the file content
             char filePathTarget[BUF_SIZE];
-            snprintf(filePathTarget, BUF_SIZE, "/home/%s/smain/%s/%s", USERNAME, destinationPath + 7, secondArg);
-            if (strcmp(command, "ufile") == 0) {
-                // Extract the file content from the remaining part of bigBuffer
-                fileContent = bigBuffer + strlen(command) + strlen(secondArg) + strlen(destinationPath) + 3;
-                storeFile(clientSock, secondArg, filePathTarget, fileContent);
-            } else  if (strcmp(command, "rmfile") == 0) {
-                //second arg has complete path
-                removeFileFromSmain(secondArg);
-
-            }
-        } else if (strstr(secondArg, ".txt")) {
-            // Transfer to Stext server using the global variable for Stext IP and port
-            forwardFileToServer(STXT_IP, STXT_PORT, bigBuffer);
-        }else if (strstr(secondArg, ".pdf")) {
-            printf("in pdf\n");
-            // Transfer to Spdf server using the global variable for Stext IP and port
-            forwardFileToServer(SPDF_IP, SPDF_PORT, bigBuffer);
+            snprintf(filePathTarget, BUF_SIZE, "/home/%s/spdf/%s/%s", USERNAME, destinationPath + 7, secondArg);
+            // Extract the file content from the remaining part of bigBuffer
+            fileContent = bigBuffer + strlen(command) + strlen(secondArg) + strlen(destinationPath) + 3;
+            storeFile(clientSock, secondArg, filePathTarget, fileContent);
+        } else if (strcmp(command, "rmfile") == 0) {
+            // Remove the file from pdf
+            removeFileFromSpdf(secondArg);
         }
     }
 
     free(bigBuffer);  // Free the allocated buffer when done
 }
-
-
 
 void makeDirectories(char *dirPath) {
     char tmp[BUF_SIZE];
@@ -184,6 +167,8 @@ void storeFile(int clientSock, const char *filename, char *filePathTarget, const
     strncpy(directory, filePathTarget, strrchr(filePathTarget, '/') - filePathTarget);
     directory[strrchr(filePathTarget, '/') - filePathTarget] = '\0';
 
+    printf("directory in spdf storeFile: %s\n", directory);
+
     // Create the directory structure if it doesn't exist
     makeDirectories(directory);
 
@@ -207,45 +192,11 @@ void storeFile(int clientSock, const char *filename, char *filePathTarget, const
     fclose(fp);
 }
 
-
-
-void forwardFileToServer(char *serverIp, int serverPort, const char *toSend) {
-    int serverSock;
-    struct sockaddr_in serverAddr;
-    int bytesToSend;
-
-
-    serverSock = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSock < 0) {
-        perror("Socket creation failed");
-        return;
-    }
-
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(serverIp);
-    serverAddr.sin_port = htons(serverPort);
-
-    if (connect(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        perror("Connect failed");
-        close(serverSock);
-        return;
-    }
-
-
-    
-    // Send the combined buffer to the Stext server
-    bytesToSend = strlen(toSend);
-    send(serverSock, toSend, bytesToSend, 0);
-
-    printf("Command and file content forwarded to Stext.\n");
-
-    close(serverSock);
-}
-void removeFileFromSmain(const char *filePath) {
+void removeFileFromSpdf(const char *filePath) {
     char fullPath[1024];
 
     // Convert the provided path to full path
-    snprintf(fullPath, sizeof(fullPath), "/home/%s%s", USERNAME, filePath + 1);
+    snprintf(fullPath, sizeof(fullPath), "/home/%s/spdf%s", USERNAME, filePath + 7);
 
     // Attempt to remove the file
     if (remove(fullPath) == 0) {
