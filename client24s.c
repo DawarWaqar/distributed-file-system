@@ -9,7 +9,8 @@
 #define BUF_SIZE 1024
 
 int validateInput(const char *command, const char *filename, const char *destinationPath);
-
+void receivesBytesAndWrite(int clientSock, const char *filename);
+void sendEOFMarker(int connectedSock);
 
 int main()
 {
@@ -88,6 +89,7 @@ int main()
 
 
             fclose(fp);
+            sendEOFMarker(clientSock);
         } else if (strcmp(command, "rmfile") == 0){
             
             // Extract the filename from the path
@@ -97,6 +99,39 @@ int main()
             }
 
             send(clientSock, line, strlen(line), 0);
+            sendEOFMarker(clientSock);
+            
+
+
+        } else if (strcmp(command, "dfile") == 0){
+            printf("in dfile\n");
+            // Extract the filename from the path
+            strncpy(filename, strrchr(secondArg, '/') + 1, BUF_SIZE);
+
+            if (validateInput(command, filename, secondArg) != 0){
+                continue;
+            }
+            printf("passed check in dfile: line: %s\n",line);
+
+
+            send(clientSock, line, strlen(line), 0);
+
+            sendEOFMarker(clientSock);
+
+            receivesBytesAndWrite(clientSock, filename);
+
+            
+
+
+        }else if (strcmp(command, "dtar") == 0){
+            
+            if (validateInput(command, secondArg, NULL) != 0){
+                continue;
+            }
+
+            send(clientSock, line, strlen(line), 0);
+            sendEOFMarker(clientSock);
+
             
 
 
@@ -106,13 +141,6 @@ int main()
         }
 
 
-        // Finally, send EOF marker as a separate message
-        memset(buffer, 0, BUF_SIZE);
-        usleep(100000);
-        strcpy(buffer, "EOF");
-        send(clientSock, buffer, strlen(buffer), 0);
-
-        printf("Command sent successfully.\n");
 
        
 
@@ -141,7 +169,7 @@ int validateInput(const char *command, const char *filename, const char *destina
     }
 
     // Validate and convert destination path
-    if (strncmp(destinationPath, "~/smain", 7) != 0)
+    if (destinationPath != NULL && strncmp(destinationPath, "~/smain", 7) != 0)
     {
         printf("Error: Destination path must start with '~/smain'.\n");
         return -1;
@@ -149,4 +177,45 @@ int validateInput(const char *command, const char *filename, const char *destina
 
     return 0; // Input is valid
 }
+void receivesBytesAndWrite(int clientSock, const char *filename) {
+    char buffer[BUF_SIZE];
+    int bytesRead;
+    FILE *fp;
 
+    // Open a file to write the received content
+    fp = fopen(filename, "wb");  // Use the provided filename
+    if (fp == NULL) {
+        perror("Failed to open file");
+        return;
+    }
+
+    while (1) {
+        memset(buffer, 0, BUF_SIZE);
+        bytesRead = recv(clientSock, buffer, BUF_SIZE, 0);
+        if (bytesRead <= 0) {
+            break;  // End of file transmission or error
+        }
+        // Check for EOF marker
+        if (bytesRead == 3 && strncmp(buffer, "EOF", 3) == 0) {
+            break;  // End of file transmission
+        }
+        fwrite(buffer, 1, bytesRead, fp);
+    }
+
+    fclose(fp);
+}
+void sendEOFMarker(int connectedSock) {
+    char buffer[BUF_SIZE];
+
+    // Sleep for a short time to ensure all previous data is sent
+    usleep(100000);
+
+    // Copy the EOF marker to the buffer
+    strcpy(buffer, "EOF");
+
+    // Send the EOF marker
+    send(connectedSock, buffer, strlen(buffer), 0);
+
+    // Print confirmation
+    printf("Command sent successfully.\n");
+}

@@ -21,8 +21,12 @@ int SPDF_PORT = SMAIN_PORT + 2;
 void prclient(int clientSock);
 void makeDirectories(char *dirPath);
 void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent);
-void forwardFileToServer(char *serverIp, int serverPort, const char *toSend);
 void removeFileFromSmain(const char *filePath);
+char* readFileContent(const char *filePath);
+int createConnectedSocket(char *receiverIp, int receiverPort);
+void sendBytes(int connectedSock, const char *toSend);
+void sendEOFMarker(int connectedSock);
+char* receiveBytes(int connectedSock);
 
 int main() {
     USERNAME = getenv("USER");
@@ -141,14 +145,39 @@ void prclient(int clientSock) {
                 //second arg has complete path
                 removeFileFromSmain(secondArg);
 
+            }else  if (strcmp(command, "dfile") == 0) {
+                char fullPath[BUF_SIZE];
+                snprintf(fullPath, sizeof(fullPath), "/home/%s%s", USERNAME, secondArg + 1);
+                printf("fullPath: %s\n",fullPath);
+                char *fileContent = readFileContent(fullPath);
+                printf("fileContent: %s\n",fileContent);
+                sendBytes(clientSock, fileContent);
+                // sendEOFMarker(clientSock);
+
+
+            }else  if (strcmp(command, "dtar") == 0) {
+                //yet to be implemented..
+
             }
         } else if (strstr(secondArg, ".txt")) {
-            // Transfer to Stext server using the global variable for Stext IP and port
-            forwardFileToServer(STXT_IP, STXT_PORT, bigBuffer);
+            int socket = createConnectedSocket(STXT_IP, STXT_PORT);
+            sendBytes(socket, bigBuffer);
+            if (strcmp(command, "dfile") == 0) {
+                 char* receivedBytes = receiveBytes(socket);
+                printf("received bytes in txt: %s\n",receivedBytes);
+                sendBytes(clientSock, receivedBytes);
+            }
+           
         }else if (strstr(secondArg, ".pdf")) {
-            printf("in pdf\n");
-            // Transfer to Spdf server using the global variable for Stext IP and port
-            forwardFileToServer(SPDF_IP, SPDF_PORT, bigBuffer);
+            int socket = createConnectedSocket(SPDF_IP, SPDF_PORT);
+            sendBytes(socket, bigBuffer);
+            if (strcmp(command, "dfile") == 0) {
+                char* receivedBytes = receiveBytes(socket);
+                printf("received bytes in pdf: %s\n",receivedBytes);
+                sendBytes(clientSock, receivedBytes);
+            }
+           
+
         }
     }
 
@@ -208,39 +237,6 @@ void storeFile(int clientSock, const char *filename, char *filePathTarget, const
 }
 
 
-
-void forwardFileToServer(char *serverIp, int serverPort, const char *toSend) {
-    int serverSock;
-    struct sockaddr_in serverAddr;
-    int bytesToSend;
-
-
-    serverSock = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSock < 0) {
-        perror("Socket creation failed");
-        return;
-    }
-
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(serverIp);
-    serverAddr.sin_port = htons(serverPort);
-
-    if (connect(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        perror("Connect failed");
-        close(serverSock);
-        return;
-    }
-
-
-    
-    // Send the combined buffer to the Stext server
-    bytesToSend = strlen(toSend);
-    send(serverSock, toSend, bytesToSend, 0);
-
-    printf("Command and file content forwarded to Stext.\n");
-
-    close(serverSock);
-}
 void removeFileFromSmain(const char *filePath) {
     char fullPath[1024];
 
@@ -253,4 +249,115 @@ void removeFileFromSmain(const char *filePath) {
     } else {
         perror("Error deleting the file");
     }
+}
+char* readFileContent(const char *filePath) {
+    FILE *file = fopen(filePath, "rb");  // Open file in binary mode
+    if (file == NULL) {
+        perror("Failed to open file");
+        return NULL;
+    }
+
+    // Move the file pointer to the end and get the file size
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    rewind(file);  // Move the file pointer back to the beginning
+
+    // Allocate memory to hold the entire file content
+    char *content = (char*)malloc(fileSize + 1);
+    if (content == NULL) {
+        perror("Failed to allocate memory");
+        fclose(file);
+        return NULL;
+    }
+
+    // Read the entire file into the allocated memory
+    size_t bytesRead = fread(content, 1, fileSize, file);
+    if (bytesRead != fileSize) {
+        perror("Failed to read the complete file");
+        free(content);
+        fclose(file);
+        return NULL;
+    }
+
+    content[fileSize] = '\0';  // Null-terminate the string
+
+    fclose(file);
+    return content;  // Return the content of the file
+}
+int createConnectedSocket(char *receiverIp, int receiverPort) {
+    int receiverSock;
+    struct sockaddr_in receiverAddr;
+
+    receiverSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (receiverSock < 0) {
+        perror("Socket creation failed");
+        return -1;
+    }
+
+    receiverAddr.sin_family = AF_INET;
+    receiverAddr.sin_addr.s_addr = inet_addr(receiverIp);
+    receiverAddr.sin_port = htons(receiverPort);
+
+    if (connect(receiverSock, (struct sockaddr*)&receiverAddr, sizeof(receiverAddr)) < 0) {
+        perror("Connect failed");
+        close(receiverSock);
+        return -1;
+    }
+
+    return receiverSock;
+}
+void sendBytes(int connectedSock, const char *toSend) {
+    int bytesToSend;
+
+    // Send the combined buffer to the server
+    bytesToSend = strlen(toSend);
+    send(connectedSock, toSend, bytesToSend, 0);
+    sendEOFMarker(connectedSock);
+
+    printf("Bytes Sent.\n");
+
+}
+
+void sendEOFMarker(int connectedSock) {
+    char buffer[BUF_SIZE];
+
+    // Sleep for a short time to ensure all previous data is sent
+    usleep(100000);
+
+    // Copy the EOF marker to the buffer
+    strcpy(buffer, "EOF");
+
+    // Send the EOF marker
+    send(connectedSock, buffer, strlen(buffer), 0);
+
+}
+char* receiveBytes(int connectedSock) {
+    char buffer[BUF_SIZE];
+    char *bigBuffer = NULL;
+    int bytesRead;
+    size_t totalSize = 0;
+
+    while (1) {
+        memset(buffer, 0, BUF_SIZE);
+        bytesRead = recv(connectedSock, buffer, BUF_SIZE, 0);
+        if (bytesRead <= 0) {
+            break;  // End of transmission or error
+        }
+
+        // Reallocate the bigBuffer to accumulate the received data
+        char *temp = realloc(bigBuffer, totalSize + bytesRead + 1);
+        if (!temp) {
+            perror("Memory reallocation failed");
+            free(bigBuffer);
+            return NULL;
+        }
+        bigBuffer = temp;
+
+        // Append the received data to bigBuffer
+        memcpy(bigBuffer + totalSize, buffer, bytesRead);
+        totalSize += bytesRead;
+        bigBuffer[totalSize] = '\0';  // Null-terminate the accumulated buffer
+    }
+
+    return bigBuffer;  // Return the accumulated buffer
 }

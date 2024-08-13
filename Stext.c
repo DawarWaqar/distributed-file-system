@@ -14,14 +14,16 @@ int STXT_PORT = SMAIN_PORT + 1;
 char *USERNAME;
 
 // Function Headers
-void processClient(int clientSock);
+void processClient(int connectedSock);
 void makeDirectories(char *dirPath);
-void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent);
+void storeFile(int connectedSock, const char *filename, char *filePathTarget, const char *fileContent);
 void removeFileFromStext(const char *filePath);
+char* readFileContent(const char *filePath);
+void sendBytes(int connectedSock, const char *toSend);
 
 int main() {
     USERNAME = getenv("USER");
-    int serverSock, clientSock;
+    int serverSock, connectedSock;
     struct sockaddr_in serverAddr, clientAddr;
     socklen_t addrLen;
     pid_t childPid;
@@ -52,22 +54,22 @@ int main() {
 
     while (1) {
         addrLen = sizeof(clientAddr);
-        clientSock = accept(serverSock, (struct sockaddr*)&clientAddr, &addrLen);
-        if (clientSock < 0) {
+        connectedSock = accept(serverSock, (struct sockaddr*)&clientAddr, &addrLen);
+        if (connectedSock < 0) {
             perror("Accept failed");
             continue;
         }
 
         if ((childPid = fork()) == 0) {
             close(serverSock);
-            processClient(clientSock);
-            close(clientSock);
+            processClient(connectedSock);
+            close(connectedSock);
             exit(0);
         } else if (childPid > 0) {
-            close(clientSock);
+            close(connectedSock);
         } else {
             perror("Fork failed");
-            close(clientSock);
+            close(connectedSock);
             continue;
         }
     }
@@ -76,7 +78,7 @@ int main() {
     return 0;
 }
 
-void processClient(int clientSock) {
+void processClient(int connectedSock) {
     char buffer[BUF_SIZE];
     char command[BUF_SIZE], secondArg[BUF_SIZE], destinationPath[BUF_SIZE];
     char *bigBuffer = NULL;
@@ -91,12 +93,12 @@ void processClient(int clientSock) {
         totalSize = 0;
 
         while (1) {
-            // Receive data from the client
+            // Receive data
             memset(buffer, 0, BUF_SIZE);
-            bytesRead = recv(clientSock, buffer, BUF_SIZE, 0);
+            bytesRead = recv(connectedSock, buffer, BUF_SIZE, 0);
             printf("bytes read server: %d: %s\n", bytesRead, buffer);
             if (bytesRead <= 0) {
-                break;  // Client disconnected or error occurred
+                break;  // sender disconnected or error occurred
             }
 
             // Check for EOF marker
@@ -129,11 +131,22 @@ void processClient(int clientSock) {
             snprintf(filePathTarget, BUF_SIZE, "/home/%s/stext/%s/%s", USERNAME, destinationPath + 7, secondArg);
             // Extract the file content from the remaining part of bigBuffer
             fileContent = bigBuffer + strlen(command) + strlen(secondArg) + strlen(destinationPath) + 3;
-            storeFile(clientSock, secondArg, filePathTarget, fileContent);
+            storeFile(connectedSock, secondArg, filePathTarget, fileContent);
         } else if (strcmp(command, "rmfile") == 0) {
             // Remove the file from Stext
             removeFileFromStext(secondArg);
-        }
+        } else if (strcmp(command, "dfile") == 0) {
+                char fullPath[BUF_SIZE]; 
+                snprintf(fullPath, sizeof(fullPath), "/home/%s/stext%s", USERNAME, secondArg + 7);
+                printf("fullPath: %s\n",fullPath);
+                char *fileContent = readFileContent(fullPath);
+                printf("fileContent: %s\n",fileContent);
+                sendBytes(connectedSock, fileContent);
+                
+
+            } 
+        
+        close(connectedSock);
     }
 
     free(bigBuffer);  // Free the allocated buffer when done
@@ -158,7 +171,7 @@ void makeDirectories(char *dirPath) {
     mkdir(tmp, 0777);
 }
 
-void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent) {
+void storeFile(int connectedSock, const char *filename, char *filePathTarget, const char *fileContent) {
     FILE *fp;
     char directory[BUF_SIZE];
 
@@ -203,4 +216,48 @@ void removeFileFromStext(const char *filePath) {
     } else {
         perror("Error deleting the file");
     }
+}
+char* readFileContent(const char *filePath) {
+    FILE *file = fopen(filePath, "rb");  // Open file in binary mode
+    if (file == NULL) {
+        perror("Failed to open file");
+        return NULL;
+    }
+
+    // Move the file pointer to the end and get the file size
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    rewind(file);  // Move the file pointer back to the beginning
+
+    // Allocate memory to hold the entire file content
+    char *content = (char*)malloc(fileSize + 1);
+    if (content == NULL) {
+        perror("Failed to allocate memory");
+        fclose(file);
+        return NULL;
+    }
+
+    // Read the entire file into the allocated memory
+    size_t bytesRead = fread(content, 1, fileSize, file);
+    if (bytesRead != fileSize) {
+        perror("Failed to read the complete file");
+        free(content);
+        fclose(file);
+        return NULL;
+    }
+
+    content[fileSize] = '\0';  // Null-terminate the string
+
+    fclose(file);
+    return content;  // Return the content of the file
+}
+void sendBytes(int connectedSock, const char *toSend) {
+    int bytesToSend;
+
+    // Send the combined buffer to the server
+    bytesToSend = strlen(toSend);
+    send(connectedSock, toSend, bytesToSend, 0);
+
+    printf("Bytes Sent.\n");
+
 }
