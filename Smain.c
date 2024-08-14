@@ -7,9 +7,14 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "config.h"
 
 #define BUF_SIZE 1024
+
+#define MAX_PATH_LEN 1024
+#define MAX_FILENAME_LEN 256
+#define MAX_FILE_COUNT 1024
 
 char *USERNAME;
 char *STXT_IP = "127.0.0.1";
@@ -30,6 +35,8 @@ char *receiveBytes(int connectedSock);
 int createTarFileOfFileType(const char *filetype, const char *homePath, const char *outputTarFilename);
 char *readTarFileContent(const char *tarFilePath, size_t *tarFileSize);
 void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize);
+void retrieveFiles(const char *directory, const char *extension, char *resultBuffer, size_t bufferSize);
+char* retrieveAndCombineFileLists(const char *inputPath);
 
 int main()
 {
@@ -120,7 +127,6 @@ void prclient(int clientSock)
             // Receive data from the client
             memset(buffer, 0, BUF_SIZE);
             bytesRead = recv(clientSock, buffer, BUF_SIZE, 0);
-            printf("bytes read server: %d: %s\n", bytesRead, buffer);
             if (bytesRead <= 0)
             {
                 break; // Client disconnected or error occurred
@@ -151,7 +157,12 @@ void prclient(int clientSock)
         // Parse the command, secondArg, and destination path from the bigBuffer
         sscanf(bigBuffer, "%s %s %s", command, secondArg, destinationPath);
 
-        if (strstr(secondArg, ".c"))
+        if (strcmp(command, "display") == 0) {
+                //second arg has path
+                char *combinedFileList = retrieveAndCombineFileLists(secondArg);
+                sendBytes(clientSock, combinedFileList);
+        }
+        else if (strstr(secondArg, ".c"))
         {
             // Construct the target file path and store the file content
             char filePathTarget[BUF_SIZE];
@@ -171,11 +182,8 @@ void prclient(int clientSock)
             {
                 char fullPath[BUF_SIZE];
                 snprintf(fullPath, sizeof(fullPath), "/home/%s%s", USERNAME, secondArg + 1);
-                printf("fullPath: %s\n", fullPath);
                 char *fileContent = readFileContent(fullPath);
-                printf("fileContent: %s\n", fileContent);
                 sendBytes(clientSock, fileContent);
-                // sendEOFMarker(clientSock);
             }
             else if (strcmp(command, "dtar") == 0)
             {
@@ -197,6 +205,7 @@ void prclient(int clientSock)
                     }
                 }
             }
+            
         }
         else if (strstr(secondArg, ".txt"))
         {
@@ -205,7 +214,6 @@ void prclient(int clientSock)
             if (strcmp(command, "dfile") == 0)
             {
                 char *receivedBytes = receiveBytes(socket);
-                printf("received bytes in txt: %s\n", receivedBytes);
                 sendBytes(clientSock, receivedBytes);
             }
             else if (strcmp(command, "dtar") == 0)
@@ -243,7 +251,6 @@ void prclient(int clientSock)
             if (strcmp(command, "dfile") == 0)
             {
                 char *receivedBytes = receiveBytes(socket);
-                printf("received bytes in pdf: %s\n", receivedBytes);
                 sendBytes(clientSock, receivedBytes);
             }
              else if (strcmp(command, "dtar") == 0)
@@ -542,10 +549,67 @@ void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize)
         totalSent += bytesSent;
     }
 
-    printf("Tar file sent successfully. Total bytes sent: %zu\n", totalSent);
 
-    // Add a delay to ensure all data is flushed
-    // usleep(200000); // 200ms delay, adjust as needed
 
     sendEOFMarker(connectedSock); // Optionally, send EOF marker after sending the tar file
+}
+void retrieveFiles(const char *directory, const char *extension, char *resultBuffer, size_t bufferSize) {
+    DIR *dir;
+    struct dirent *entry;
+    char filePath[MAX_PATH_LEN];
+
+    if ((dir = opendir(directory)) != NULL) {
+        while ((entry = readdir(dir)) != NULL) {
+            if (entry->d_type == DT_REG) {  // Regular file
+                const char *ext = strrchr(entry->d_name, '.');
+                if (ext && strcmp(ext, extension) == 0) {
+                    // Construct the full file path
+                    snprintf(filePath, sizeof(filePath), "%s/%s", directory, entry->d_name);
+                    
+                    // Append the file name to the result buffer
+                    if (strlen(resultBuffer) + strlen(entry->d_name) + 1 < bufferSize) {
+                        strcat(resultBuffer, entry->d_name);
+                        strcat(resultBuffer, " ");
+                    }
+                }
+            }
+        }
+        closedir(dir);
+    } else {
+        perror("Failed to open directory");
+    }
+}
+
+// Function to combine all .c, .pdf, and .txt files from the given path
+char* retrieveAndCombineFileLists(const char *inputPath) {
+    char smainPath[MAX_PATH_LEN];
+    char spdfPath[MAX_PATH_LEN];
+    char stextPath[MAX_PATH_LEN];
+    char *result = (char*)malloc(MAX_FILE_COUNT * MAX_FILENAME_LEN);
+    
+    if (result == NULL) {
+        perror("Failed to allocate memory");
+        return NULL;
+    }
+
+    result[0] = '\0';  // Initialize the result buffer
+
+    // Replace ~/smain with /home/USERNAME/smain
+    char *username = getenv("USER");
+    snprintf(smainPath, sizeof(smainPath), "/home/%s/smain%s", username, inputPath + 7);
+    snprintf(spdfPath, sizeof(spdfPath), "/home/%s/spdf%s", username, inputPath + 7);
+    snprintf(stextPath, sizeof(stextPath), "/home/%s/stext%s", username, inputPath + 7);
+
+    // Retrieve and combine file names
+    retrieveFiles(smainPath, ".c", result, MAX_FILE_COUNT * MAX_FILENAME_LEN);
+    retrieveFiles(spdfPath, ".pdf", result, MAX_FILE_COUNT * MAX_FILENAME_LEN);
+    retrieveFiles(stextPath, ".txt", result, MAX_FILE_COUNT * MAX_FILENAME_LEN);
+
+    // Remove the trailing space
+    size_t len = strlen(result);
+    if (len > 0 && result[len - 1] == ' ') {
+        result[len - 1] = '\0';
+    }
+
+    return result;
 }

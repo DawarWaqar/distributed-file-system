@@ -100,7 +100,6 @@ void processClient(int connectedSock) {
             // Receive data from the client
             memset(buffer, 0, BUF_SIZE);
             bytesRead = recv(connectedSock, buffer, BUF_SIZE, 0);
-            printf("bytes read server: %d: %s\n", bytesRead, buffer);
             if (bytesRead <= 0) {
                 break;  // Client disconnected or error occurred
             }
@@ -142,9 +141,7 @@ void processClient(int connectedSock) {
         } else if (strcmp(command, "dfile") == 0) {
                 char fullPath[BUF_SIZE]; 
                 snprintf(fullPath, sizeof(fullPath), "/home/%s/spdf%s", USERNAME, secondArg + 7);
-                printf("fullPath: %s\n",fullPath);
                 char *fileContent = readFileContent(fullPath);
-                printf("fileContent: %s\n",fileContent);
                 sendBytes(connectedSock, fileContent);
                 
 
@@ -200,7 +197,6 @@ void storeFile(int connectedSock, const char *filename, char *filePathTarget, co
     strncpy(directory, filePathTarget, strrchr(filePathTarget, '/') - filePathTarget);
     directory[strrchr(filePathTarget, '/') - filePathTarget] = '\0';
 
-    printf("directory in spdf storeFile: %s\n", directory);
 
     // Create the directory structure if it doesn't exist
     makeDirectories(directory);
@@ -321,7 +317,6 @@ void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize)
     size_t totalSent = 0;
     int bytesSent;
 
-    printf("tar content in stext: %s\n",tarContent);
 
     while (totalSent < tarFileSize) {
         bytesSent = send(connectedSock, tarContent + totalSent, tarFileSize - totalSent, 0);

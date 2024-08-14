@@ -11,6 +11,7 @@
 int validateInput(const char *command, const char *filename, const char *destinationPath);
 void receivesBytesAndWrite(int clientSock, const char *filename);
 void sendEOFMarker(int connectedSock);
+char* receiveBytesAndReturn(int clientSock);
 
 int main()
 {
@@ -70,17 +71,14 @@ int main()
             int i = 0;
             while ((bytesRead = fread(buffer, sizeof(char), BUF_SIZE, fp)) > 0)
             {
-                printf("bytes read:  %d\n", bytesRead);
                 if (i == 0)
                 {
                     // Append the file content (buffer) to the line
                     strncat(line, buffer, bytesRead);
-                    printf("line: %s\n",line);
                     send(clientSock, line, strlen(line), 0); // Send the line with the initial part of the file content
                 }
                 else
                 {
-                    printf("rem buffer: %s\n",buffer);
                     send(clientSock, buffer, bytesRead, 0);
                 }
                 i = i + 1;
@@ -104,14 +102,12 @@ int main()
 
 
         } else if (strcmp(command, "dfile") == 0){
-            printf("in dfile\n");
             // Extract the filename from the path
             strncpy(filename, strrchr(secondArg, '/') + 1, BUF_SIZE);
 
             if (validateInput(command, filename, secondArg) != 0){
                 continue;
             }
-            printf("passed check in dfile: line: %s\n",line);
 
 
             send(clientSock, line, strlen(line), 0);
@@ -133,7 +129,6 @@ int main()
 
             sendEOFMarker(clientSock);
 
-            printf("second rg: %s\n",secondArg);
 
           if (strstr(secondArg, ".c")) {
                 strcpy(filename, "cfiles.tar");
@@ -143,7 +138,6 @@ int main()
                 strcpy(filename, "txtFiles.tar");
             }
 
-            printf("fn: %s\n",filename);
 
 
             receivesBytesAndWrite(clientSock, filename);
@@ -151,10 +145,22 @@ int main()
             
 
 
+        }else if (strcmp(command, "display") == 0){
+            if (validateInput(command, NULL, secondArg) != 0){
+                continue;
+            }
+
+            send(clientSock, line, strlen(line), 0);
+            sendEOFMarker(clientSock);
+            char *displayRes = receiveBytesAndReturn(clientSock);
+            printf("\n%s\n",displayRes);
+            
+
         } else{
             printf("Invalid first argument\n");
             continue;
         }
+       
 
 
 
@@ -178,7 +184,7 @@ int validateInput(const char *command, const char *filename, const char *destina
     }
 
     // Validate filename extension
-    if (!(strstr(filename, ".c") || strstr(filename, ".pdf") || strstr(filename, ".txt")))
+    if (filename != NULL && !(strstr(filename, ".c") || strstr(filename, ".pdf") || strstr(filename, ".txt")))
     {
         printf("Error: Invalid file type. Only .c, .pdf, and .txt files are allowed.\n");
         return -1;
@@ -237,4 +243,42 @@ void sendEOFMarker(int connectedSock) {
 
     // Print confirmation
     printf("Command sent successfully.\n");
+}
+char* receiveBytesAndReturn(int clientSock) {
+    char buffer[BUF_SIZE];
+    char *bigBuffer = NULL;
+    int bytesRead;
+    size_t totalSize = 0;
+
+    while (1) {
+        memset(buffer, 0, BUF_SIZE);
+        bytesRead = recv(clientSock, buffer, BUF_SIZE, 0);
+        printf("bytes-read: %d\n", bytesRead);
+        if (bytesRead <= 0) {
+            printf("in br<0\n");
+            break;  // End of transmission or error
+        }
+
+        // Check for EOF marker
+        if (bytesRead == 3 && strncmp(buffer, "EOF", 3) == 0) {
+            printf("in br==eof\n");
+            break;  // End of transmission
+        }
+
+        // Reallocate bigBuffer to accumulate the received data
+        char *temp = realloc(bigBuffer, totalSize + bytesRead + 1);
+        if (!temp) {
+            perror("Memory reallocation failed");
+            free(bigBuffer);
+            return NULL;
+        }
+        bigBuffer = temp;
+
+        // Append the received data to bigBuffer
+        memcpy(bigBuffer + totalSize, buffer, bytesRead);
+        totalSize += bytesRead;
+        bigBuffer[totalSize] = '\0';  // Null-terminate the accumulated buffer
+    }
+
+    return bigBuffer;  // Return the accumulated buffer
 }
