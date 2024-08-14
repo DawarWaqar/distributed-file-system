@@ -130,7 +130,23 @@ int main()
             }
 
             send(clientSock, line, strlen(line), 0);
+
             sendEOFMarker(clientSock);
+
+            printf("second rg: %s\n",secondArg);
+
+          if (strstr(secondArg, ".c")) {
+                strcpy(filename, "cfiles.tar");
+            } else if (strstr(secondArg, ".pdf")) {
+                strcpy(filename, "pdfFiles.tar");
+            } else {
+                strcpy(filename, "txtFiles.tar");
+            }
+
+            printf("fn: %s\n",filename);
+
+
+            receivesBytesAndWrite(clientSock, filename);
 
             
 
@@ -192,11 +208,14 @@ void receivesBytesAndWrite(int clientSock, const char *filename) {
     while (1) {
         memset(buffer, 0, BUF_SIZE);
         bytesRead = recv(clientSock, buffer, BUF_SIZE, 0);
+        printf("bytes-read: %d\n",bytesRead);
         if (bytesRead <= 0) {
+            printf("in br<0\n");
             break;  // End of file transmission or error
         }
-        // Check for EOF marker
+        //Check for EOF marker
         if (bytesRead == 3 && strncmp(buffer, "EOF", 3) == 0) {
+            printf("in br==eof\n");
             break;  // End of file transmission
         }
         fwrite(buffer, 1, bytesRead, fp);

@@ -20,6 +20,9 @@ void storeFile(int connectedSock, const char *filename, char *filePathTarget, co
 void removeFileFromStext(const char *filePath);
 char* readFileContent(const char *filePath);
 void sendBytes(int connectedSock, const char *toSend);
+char *readTarFileContent(const char *tarFilePath, size_t *tarFileSize);
+void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize);
+int createTarFileOfFileType(const char *filetype, const char *homePath, const char *outputTarFilename);
 
 int main() {
     USERNAME = getenv("USER");
@@ -144,7 +147,22 @@ void processClient(int connectedSock) {
                 sendBytes(connectedSock, fileContent);
                 
 
-            } 
+            } else if (strcmp(command, "dtar") == 0) {
+                char fullPath[BUF_SIZE];
+                snprintf(fullPath, sizeof(fullPath), "/home/%s/stext", USERNAME);
+                if (createTarFileOfFileType(".txt", fullPath, "txtFiles.tar") == 0) {
+                    char fullPathWithTar[1024];
+                    snprintf(fullPathWithTar, sizeof(fullPathWithTar), "%s/txtFiles.tar", fullPath);
+
+                    size_t tarFileSize;
+                    char *tarContent = readTarFileContent(fullPathWithTar, &tarFileSize);
+
+                    if (tarContent) {
+                        sendBytesTar(connectedSock, tarContent, tarFileSize);
+                        free(tarContent);  // Free the allocated memory after sending
+                    }
+                }
+            }
         
         close(connectedSock);
     }
@@ -260,4 +278,71 @@ void sendBytes(int connectedSock, const char *toSend) {
 
     printf("Bytes Sent.\n");
 
+}
+// Additional functions for handling tar files
+char *readTarFileContent(const char *tarFilePath, size_t *tarFileSize) {
+    FILE *file = fopen(tarFilePath, "rb");  // Open file in binary mode
+    if (file == NULL) {
+        perror("Failed to open tar file");
+        return NULL;
+    }
+
+    // Move the file pointer to the end and get the file size
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    rewind(file);  // Move the file pointer back to the beginning
+
+    // Allocate memory to hold the entire tar file content
+    char *content = (char *)malloc(size);
+    if (content == NULL) {
+        perror("Failed to allocate memory for tar file");
+        fclose(file);
+        return NULL;
+    }
+
+    // Read the entire tar file into the allocated memory
+    size_t bytesRead = fread(content, 1, size, file);
+    if (bytesRead != size) {
+        perror("Failed to read the complete tar file");
+        free(content);
+        fclose(file);
+        return NULL;
+    }
+
+    fclose(file);
+    *tarFileSize = size;
+    return content;  // Return the content of the tar file
+}
+
+void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize) {
+    size_t totalSent = 0;
+    int bytesSent;
+
+    printf("tar content in stext: %s\n",tarContent);
+
+    while (totalSent < tarFileSize) {
+        bytesSent = send(connectedSock, tarContent + totalSent, tarFileSize - totalSent, 0);
+        if (bytesSent < 0) {
+            perror("Failed to send tar file");
+            break;
+        }
+        totalSent += bytesSent;
+    }
+
+    printf("Tar file sent successfully. Total bytes sent: %zu\n", totalSent);
+
+    // sendEOFMarker(connectedSock); // Optionally, send EOF marker after sending the tar file
+}
+int createTarFileOfFileType(const char *filetype, const char *homePath, const char *outputTarFilename)
+{
+    char command[1024];
+
+    // Construct the find command to search for files with the given filetype and create a tar file in homePath
+    snprintf(command, sizeof(command), "find %s -type f -name '*%s' -print0 | xargs -0 tar -cvf %s/%s", homePath, filetype, homePath, outputTarFilename);
+
+    // Execute the command
+    int result = system(command);
+
+    // Return 0 on success, or -1 on failure
+    return (result == 0) ? 0 : -1;
 }

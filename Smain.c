@@ -12,23 +12,27 @@
 #define BUF_SIZE 1024
 
 char *USERNAME;
-char *STXT_IP = "127.0.0.1";  
-int STXT_PORT = SMAIN_PORT + 1;        
-char *SPDF_IP = "127.0.0.1";  
-int SPDF_PORT = SMAIN_PORT + 2;        
+char *STXT_IP = "127.0.0.1";
+int STXT_PORT = SMAIN_PORT + 1;
+char *SPDF_IP = "127.0.0.1";
+int SPDF_PORT = SMAIN_PORT + 2;
 
 // Function Headers
 void prclient(int clientSock);
 void makeDirectories(char *dirPath);
 void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent);
-void removeFileFromSmain(const char *filePath);
-char* readFileContent(const char *filePath);
+void removeFile(const char *filePath);
+char *readFileContent(const char *filePath);
 int createConnectedSocket(char *receiverIp, int receiverPort);
 void sendBytes(int connectedSock, const char *toSend);
 void sendEOFMarker(int connectedSock);
-char* receiveBytes(int connectedSock);
+char *receiveBytes(int connectedSock);
+int createTarFileOfFileType(const char *filetype, const char *homePath, const char *outputTarFilename);
+char *readTarFileContent(const char *tarFilePath, size_t *tarFileSize);
+void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize);
 
-int main() {
+int main()
+{
     USERNAME = getenv("USER");
     int serverSock, clientSock;
     struct sockaddr_in serverAddr, clientAddr;
@@ -36,7 +40,8 @@ int main() {
     pid_t childPid;
 
     serverSock = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSock < 0) {
+    if (serverSock < 0)
+    {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
@@ -45,13 +50,15 @@ int main() {
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(SMAIN_PORT);
 
-    if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+    if (bind(serverSock, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
+    {
         perror("Bind failed");
         close(serverSock);
         exit(EXIT_FAILURE);
     }
 
-    if (listen(serverSock, 10) < 0) {
+    if (listen(serverSock, 10) < 0)
+    {
         perror("Listen failed");
         close(serverSock);
         exit(EXIT_FAILURE);
@@ -59,22 +66,29 @@ int main() {
 
     printf("Smain server listening on port %d...\n", SMAIN_PORT);
 
-    while (1) {
+    while (1)
+    {
         addrLen = sizeof(clientAddr);
-        clientSock = accept(serverSock, (struct sockaddr*)&clientAddr, &addrLen);
-        if (clientSock < 0) {
+        clientSock = accept(serverSock, (struct sockaddr *)&clientAddr, &addrLen);
+        if (clientSock < 0)
+        {
             perror("Accept failed");
             continue;
         }
 
-        if ((childPid = fork()) == 0) {
+        if ((childPid = fork()) == 0)
+        {
             close(serverSock);
             prclient(clientSock);
             close(clientSock);
             exit(0);
-        } else if (childPid > 0) {
+        }
+        else if (childPid > 0)
+        {
             close(clientSock);
-        } else {
+        }
+        else
+        {
             perror("Fork failed");
             close(clientSock);
             continue;
@@ -85,7 +99,8 @@ int main() {
     return 0;
 }
 
-void prclient(int clientSock) {
+void prclient(int clientSock)
+{
     char buffer[BUF_SIZE];
     char command[BUF_SIZE], secondArg[BUF_SIZE], destinationPath[BUF_SIZE];
     char *bigBuffer = NULL;
@@ -93,29 +108,34 @@ void prclient(int clientSock) {
     int bytesRead;
     size_t totalSize = 0;
 
-    while (1) {
+    while (1)
+    {
         // Free and reset the buffers for each new client command
         free(bigBuffer);
         bigBuffer = NULL;
         totalSize = 0;
 
-        while (1) {
+        while (1)
+        {
             // Receive data from the client
             memset(buffer, 0, BUF_SIZE);
             bytesRead = recv(clientSock, buffer, BUF_SIZE, 0);
             printf("bytes read server: %d: %s\n", bytesRead, buffer);
-            if (bytesRead <= 0) {
-                break;  // Client disconnected or error occurred
+            if (bytesRead <= 0)
+            {
+                break; // Client disconnected or error occurred
             }
 
             // Check for EOF marker
-            if (bytesRead == 3 && strncmp(buffer, "EOF", 3) == 0) {
-                break;  // End of file transmission
+            if (bytesRead == 3 && strncmp(buffer, "EOF", 3) == 0)
+            {
+                break; // End of file transmission
             }
 
             // Reallocate the bigBuffer to accumulate the received data
             char *temp = realloc(bigBuffer, totalSize + bytesRead + 1);
-            if (!temp) {
+            if (!temp)
+            {
                 perror("Memory reallocation failed");
                 free(bigBuffer);
                 return;
@@ -125,78 +145,154 @@ void prclient(int clientSock) {
             // Append the received data to bigBuffer
             memcpy(bigBuffer + totalSize, buffer, bytesRead);
             totalSize += bytesRead;
-            bigBuffer[totalSize] = '\0';  // Null-terminate the accumulated buffer
+            bigBuffer[totalSize] = '\0'; // Null-terminate the accumulated buffer
         }
 
         // Parse the command, secondArg, and destination path from the bigBuffer
         sscanf(bigBuffer, "%s %s %s", command, secondArg, destinationPath);
 
-       
-
-        if (strstr(secondArg, ".c")) {
+        if (strstr(secondArg, ".c"))
+        {
             // Construct the target file path and store the file content
             char filePathTarget[BUF_SIZE];
             snprintf(filePathTarget, BUF_SIZE, "/home/%s/smain/%s/%s", USERNAME, destinationPath + 7, secondArg);
-            if (strcmp(command, "ufile") == 0) {
+            if (strcmp(command, "ufile") == 0)
+            {
                 // Extract the file content from the remaining part of bigBuffer
                 fileContent = bigBuffer + strlen(command) + strlen(secondArg) + strlen(destinationPath) + 3;
                 storeFile(clientSock, secondArg, filePathTarget, fileContent);
-            } else  if (strcmp(command, "rmfile") == 0) {
-                //second arg has complete path
-                removeFileFromSmain(secondArg);
-
-            }else  if (strcmp(command, "dfile") == 0) {
+            }
+            else if (strcmp(command, "rmfile") == 0)
+            {
+                // second arg has complete path
+                removeFile(secondArg);
+            }
+            else if (strcmp(command, "dfile") == 0)
+            {
                 char fullPath[BUF_SIZE];
                 snprintf(fullPath, sizeof(fullPath), "/home/%s%s", USERNAME, secondArg + 1);
-                printf("fullPath: %s\n",fullPath);
+                printf("fullPath: %s\n", fullPath);
                 char *fileContent = readFileContent(fullPath);
-                printf("fileContent: %s\n",fileContent);
+                printf("fileContent: %s\n", fileContent);
                 sendBytes(clientSock, fileContent);
                 // sendEOFMarker(clientSock);
-
-
-            }else  if (strcmp(command, "dtar") == 0) {
-                //yet to be implemented..
-
             }
-        } else if (strstr(secondArg, ".txt")) {
+            else if (strcmp(command, "dtar") == 0)
+            {
+                char fullPath[BUF_SIZE];
+                snprintf(fullPath, sizeof(fullPath), "/home/%s/smain", USERNAME);
+                if (createTarFileOfFileType(".c", fullPath, "cfiles.tar") == 0)
+                {
+                    char fullPathWithTar[1024];
+                    snprintf(fullPathWithTar, sizeof(fullPathWithTar), "%s/cfiles.tar", fullPath);
+
+                    size_t tarFileSize;
+                    char *tarContent = readTarFileContent(fullPathWithTar, &tarFileSize);
+
+                    if (tarContent)
+                    {
+                        sendBytesTar(clientSock, tarContent, tarFileSize);
+                        free(tarContent); // Free the allocated memory after sending
+                        removeFile("~/smain/cfiles.tar");
+                    }
+                }
+            }
+        }
+        else if (strstr(secondArg, ".txt"))
+        {
             int socket = createConnectedSocket(STXT_IP, STXT_PORT);
             sendBytes(socket, bigBuffer);
-            if (strcmp(command, "dfile") == 0) {
-                 char* receivedBytes = receiveBytes(socket);
-                printf("received bytes in txt: %s\n",receivedBytes);
+            if (strcmp(command, "dfile") == 0)
+            {
+                char *receivedBytes = receiveBytes(socket);
+                printf("received bytes in txt: %s\n", receivedBytes);
                 sendBytes(clientSock, receivedBytes);
             }
-           
-        }else if (strstr(secondArg, ".pdf")) {
+            else if (strcmp(command, "dtar") == 0)
+            {
+                char fullPath[BUF_SIZE];
+                char finalPath[BUF_SIZE];
+                char *destServer = "stext";
+                char *targetTarToSend = "txtFiles.tar";
+                snprintf(fullPath, sizeof(fullPath), "/home/%s/%s", USERNAME, destServer);
+                if (createTarFileOfFileType(".txt", fullPath, targetTarToSend) == 0)
+                {
+                    char fullPathWithTar[1024];
+                    snprintf(fullPathWithTar, sizeof(fullPathWithTar), "%s/%s", fullPath,targetTarToSend);
+
+                    size_t tarFileSize;
+                    char *tarContent = readTarFileContent(fullPathWithTar, &tarFileSize);
+
+                    if (tarContent)
+                    {
+                        sendBytesTar(clientSock, tarContent, tarFileSize);
+                        free(tarContent); // Free the allocated memory after sending
+                        snprintf(finalPath, sizeof(finalPath), "~/%s/%s", destServer,targetTarToSend);
+                        removeFile(finalPath);
+
+                    }
+                }
+               
+            }
+            
+        }
+        else if (strstr(secondArg, ".pdf"))
+        {
             int socket = createConnectedSocket(SPDF_IP, SPDF_PORT);
             sendBytes(socket, bigBuffer);
-            if (strcmp(command, "dfile") == 0) {
-                char* receivedBytes = receiveBytes(socket);
-                printf("received bytes in pdf: %s\n",receivedBytes);
+            if (strcmp(command, "dfile") == 0)
+            {
+                char *receivedBytes = receiveBytes(socket);
+                printf("received bytes in pdf: %s\n", receivedBytes);
                 sendBytes(clientSock, receivedBytes);
             }
-           
+             else if (strcmp(command, "dtar") == 0)
+            {
+                char fullPath[BUF_SIZE];
+                char finalPath[BUF_SIZE];
+                char *destServer = "spdf";
+                char *targetTarToSend = "pdfFiles.tar";
+                snprintf(fullPath, sizeof(fullPath), "/home/%s/%s", USERNAME, destServer);
+                if (createTarFileOfFileType(".pdf", fullPath, targetTarToSend) == 0)
+                {
+                    char fullPathWithTar[1024];
+                    snprintf(fullPathWithTar, sizeof(fullPathWithTar), "%s/%s", fullPath,targetTarToSend);
 
+                    size_t tarFileSize;
+                    char *tarContent = readTarFileContent(fullPathWithTar, &tarFileSize);
+
+                    if (tarContent)
+                    {
+                        sendBytesTar(clientSock, tarContent, tarFileSize);
+                        free(tarContent); // Free the allocated memory after sending
+                        snprintf(finalPath, sizeof(finalPath), "~/%s/%s", destServer,targetTarToSend);
+                        removeFile(finalPath);
+
+
+                    }
+                }
+               
+            }
         }
     }
 
-    free(bigBuffer);  // Free the allocated buffer when done
+    free(bigBuffer); // Free the allocated buffer when done
 }
 
-
-
-void makeDirectories(char *dirPath) {
+void makeDirectories(char *dirPath)
+{
     char tmp[BUF_SIZE];
     char *p = NULL;
     size_t len;
 
     snprintf(tmp, sizeof(tmp), "%s", dirPath);
     len = strlen(tmp);
-    if(tmp[len - 1] == '/')
+    if (tmp[len - 1] == '/')
         tmp[len - 1] = 0;
-    for(p = tmp + 1; *p; p++) {
-        if(*p == '/') {
+    for (p = tmp + 1; *p; p++)
+    {
+        if (*p == '/')
+        {
             *p = 0;
             mkdir(tmp, 0777);
             *p = '/';
@@ -205,7 +301,8 @@ void makeDirectories(char *dirPath) {
     mkdir(tmp, 0777);
 }
 
-void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent) {
+void storeFile(int clientSock, const char *filename, char *filePathTarget, const char *fileContent)
+{
     FILE *fp;
     char directory[BUF_SIZE];
 
@@ -218,7 +315,8 @@ void storeFile(int clientSock, const char *filename, char *filePathTarget, const
 
     // Open the target file for writing
     fp = fopen(filePathTarget, "wb");
-    if (fp == NULL) {
+    if (fp == NULL)
+    {
         perror("Failed to open destination file");
         return;
     }
@@ -227,32 +325,40 @@ void storeFile(int clientSock, const char *filename, char *filePathTarget, const
     size_t fileSize = strlen(fileContent);
     size_t written = fwrite(fileContent, 1, fileSize, fp);
 
-    if (written != fileSize) {
+    if (written != fileSize)
+    {
         perror("Failed to write the complete file content");
-    } else {
+    }
+    else
+    {
         printf("Stored %s successfully.\n", filename);
     }
 
     fclose(fp);
 }
 
-
-void removeFileFromSmain(const char *filePath) {
+void removeFile(const char *filePath)
+{
     char fullPath[1024];
 
-    // Convert the provided path to full path
+    // Convert the provided path to full path ~/smain
     snprintf(fullPath, sizeof(fullPath), "/home/%s%s", USERNAME, filePath + 1);
 
     // Attempt to remove the file
-    if (remove(fullPath) == 0) {
+    if (remove(fullPath) == 0)
+    {
         printf("File %s deleted successfully.\n", fullPath);
-    } else {
+    }
+    else
+    {
         perror("Error deleting the file");
     }
 }
-char* readFileContent(const char *filePath) {
-    FILE *file = fopen(filePath, "rb");  // Open file in binary mode
-    if (file == NULL) {
+char *readFileContent(const char *filePath)
+{
+    FILE *file = fopen(filePath, "rb"); // Open file in binary mode
+    if (file == NULL)
+    {
         perror("Failed to open file");
         return NULL;
     }
@@ -260,11 +366,12 @@ char* readFileContent(const char *filePath) {
     // Move the file pointer to the end and get the file size
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
-    rewind(file);  // Move the file pointer back to the beginning
+    rewind(file); // Move the file pointer back to the beginning
 
     // Allocate memory to hold the entire file content
-    char *content = (char*)malloc(fileSize + 1);
-    if (content == NULL) {
+    char *content = (char *)malloc(fileSize + 1);
+    if (content == NULL)
+    {
         perror("Failed to allocate memory");
         fclose(file);
         return NULL;
@@ -272,24 +379,27 @@ char* readFileContent(const char *filePath) {
 
     // Read the entire file into the allocated memory
     size_t bytesRead = fread(content, 1, fileSize, file);
-    if (bytesRead != fileSize) {
+    if (bytesRead != fileSize)
+    {
         perror("Failed to read the complete file");
         free(content);
         fclose(file);
         return NULL;
     }
 
-    content[fileSize] = '\0';  // Null-terminate the string
+    content[fileSize] = '\0'; // Null-terminate the string
 
     fclose(file);
-    return content;  // Return the content of the file
+    return content; // Return the content of the file
 }
-int createConnectedSocket(char *receiverIp, int receiverPort) {
+int createConnectedSocket(char *receiverIp, int receiverPort)
+{
     int receiverSock;
     struct sockaddr_in receiverAddr;
 
     receiverSock = socket(AF_INET, SOCK_STREAM, 0);
-    if (receiverSock < 0) {
+    if (receiverSock < 0)
+    {
         perror("Socket creation failed");
         return -1;
     }
@@ -298,7 +408,8 @@ int createConnectedSocket(char *receiverIp, int receiverPort) {
     receiverAddr.sin_addr.s_addr = inet_addr(receiverIp);
     receiverAddr.sin_port = htons(receiverPort);
 
-    if (connect(receiverSock, (struct sockaddr*)&receiverAddr, sizeof(receiverAddr)) < 0) {
+    if (connect(receiverSock, (struct sockaddr *)&receiverAddr, sizeof(receiverAddr)) < 0)
+    {
         perror("Connect failed");
         close(receiverSock);
         return -1;
@@ -306,7 +417,8 @@ int createConnectedSocket(char *receiverIp, int receiverPort) {
 
     return receiverSock;
 }
-void sendBytes(int connectedSock, const char *toSend) {
+void sendBytes(int connectedSock, const char *toSend)
+{
     int bytesToSend;
 
     // Send the combined buffer to the server
@@ -315,10 +427,10 @@ void sendBytes(int connectedSock, const char *toSend) {
     sendEOFMarker(connectedSock);
 
     printf("Bytes Sent.\n");
-
 }
 
-void sendEOFMarker(int connectedSock) {
+void sendEOFMarker(int connectedSock)
+{
     char buffer[BUF_SIZE];
 
     // Sleep for a short time to ensure all previous data is sent
@@ -329,24 +441,27 @@ void sendEOFMarker(int connectedSock) {
 
     // Send the EOF marker
     send(connectedSock, buffer, strlen(buffer), 0);
-
 }
-char* receiveBytes(int connectedSock) {
+char *receiveBytes(int connectedSock)
+{
     char buffer[BUF_SIZE];
     char *bigBuffer = NULL;
     int bytesRead;
     size_t totalSize = 0;
 
-    while (1) {
+    while (1)
+    {
         memset(buffer, 0, BUF_SIZE);
         bytesRead = recv(connectedSock, buffer, BUF_SIZE, 0);
-        if (bytesRead <= 0) {
-            break;  // End of transmission or error
+        if (bytesRead <= 0)
+        {
+            break; // End of transmission or error
         }
 
         // Reallocate the bigBuffer to accumulate the received data
         char *temp = realloc(bigBuffer, totalSize + bytesRead + 1);
-        if (!temp) {
+        if (!temp)
+        {
             perror("Memory reallocation failed");
             free(bigBuffer);
             return NULL;
@@ -356,8 +471,81 @@ char* receiveBytes(int connectedSock) {
         // Append the received data to bigBuffer
         memcpy(bigBuffer + totalSize, buffer, bytesRead);
         totalSize += bytesRead;
-        bigBuffer[totalSize] = '\0';  // Null-terminate the accumulated buffer
+        bigBuffer[totalSize] = '\0'; // Null-terminate the accumulated buffer
     }
 
-    return bigBuffer;  // Return the accumulated buffer
+    return bigBuffer; // Return the accumulated buffer
+}
+int createTarFileOfFileType(const char *filetype, const char *homePath, const char *outputTarFilename)
+{
+    char command[1024];
+
+    // Construct the find command to search for files with the given filetype and create a tar file in homePath
+    snprintf(command, sizeof(command), "find %s -type f -name '*%s' -print0 | xargs -0 tar -cvf %s/%s", homePath, filetype, homePath, outputTarFilename);
+
+    // Execute the command
+    int result = system(command);
+
+    // Return 0 on success, or -1 on failure
+    return (result == 0) ? 0 : -1;
+}
+char *readTarFileContent(const char *tarFilePath, size_t *tarFileSize)
+{
+    FILE *file = fopen(tarFilePath, "rb"); // Open file in binary mode
+    if (file == NULL)
+    {
+        perror("Failed to open tar file");
+        return NULL;
+    }
+
+    // Move the file pointer to the end and get the file size
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    rewind(file); // Move the file pointer back to the beginning
+
+    // Allocate memory to hold the entire tar file content
+    char *content = (char *)malloc(size);
+    if (content == NULL)
+    {
+        perror("Failed to allocate memory for tar file");
+        fclose(file);
+        return NULL;
+    }
+
+    // Read the entire tar file into the allocated memory
+    size_t bytesRead = fread(content, 1, size, file);
+    if (bytesRead != size)
+    {
+        perror("Failed to read the complete tar file");
+        free(content);
+        fclose(file);
+        return NULL;
+    }
+
+    fclose(file);
+    *tarFileSize = size;
+    return content; // Return the content of the tar file
+}
+void sendBytesTar(int connectedSock, const char *tarContent, size_t tarFileSize)
+{
+    size_t totalSent = 0;
+    int bytesSent;
+
+    while (totalSent < tarFileSize)
+    {
+        bytesSent = send(connectedSock, tarContent + totalSent, tarFileSize - totalSent, 0);
+        if (bytesSent < 0)
+        {
+            perror("Failed to send tar file");
+            break;
+        }
+        totalSent += bytesSent;
+    }
+
+    printf("Tar file sent successfully. Total bytes sent: %zu\n", totalSent);
+
+    // Add a delay to ensure all data is flushed
+    // usleep(200000); // 200ms delay, adjust as needed
+
+    sendEOFMarker(connectedSock); // Optionally, send EOF marker after sending the tar file
 }
